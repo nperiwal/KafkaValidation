@@ -1,0 +1,277 @@
+
+import java.io.*;
+import java.net.URI;
+import java.text.*;
+import java.util.*;
+import java.util.Date;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Created by narayan.periwal on 3/14/16.
+ */
+public class KafkaScribeValidation {
+
+    public static void main (String args[]) throws Exception {
+
+        String topic = args[0];
+        String date = args[1];
+        String colo = args[2];
+        String offset = args[3];
+
+        System.out.println("Arguments are: " + topic + ", " + date + ", " + colo + ", " + offset);
+        String result = validate(topic, date, colo, offset);
+        System.out.println("/***********Result************/");
+        System.out.println(result);
+    }
+
+    public static String validate(String topic, String date, String colo, String offset) throws Exception {
+        String hdfsUri;
+        if (colo.equals("krypton")) {
+            hdfsUri = "webhdfs://krypton-webhdfs.grid.uh1.inmobi.com:14000";
+        } else if (colo.equals("topaz")) {
+            hdfsUri = "topaz-webhdfs.grid.uj1.inmobi.com\n";
+        } else if (colo.equals("emerald")) {
+            hdfsUri = "emerald-webhdfs.grid.lhr1.inmobi.com";
+        } else if (colo.equals("opal")) {
+            hdfsUri = "opal-webhdfs.grid.hkg1.inmobi.com";
+        } else {
+            return "Accepted values for colo = opal,krypton,topaz,emerald";
+        }
+
+
+        Date startDate = getStartDate(date);
+        long offsetHours  = Long.parseLong(offset);
+        Date endDate = getEndDate(date, offsetHours);
+
+        String FS_DEFAULT_NAME = "fs.defaultFS";
+        FileSystem fs;
+        String basePath = "/kafka/data/validation/" + topic;
+
+        Configuration configuration = new Configuration();
+        configuration.setBoolean("fs.automatic.close", false);
+        configuration.set(FS_DEFAULT_NAME, hdfsUri);
+        configuration.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
+        configuration.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
+        configuration.set("fs.webhdfs.impl", org.apache.hadoop.hdfs.web.WebHdfsFileSystem.class.getName());
+
+        fs = FileSystem.get(URI.create(hdfsUri), configuration);
+
+
+        HashMap<String, Measures> data = getAggregatedValues(fs, startDate, endDate, basePath);
+        Double measure1Diff = 0.0, measure2Diff = 0.0, measure3Diff = 0.0;
+        Double diff1 = 0.0, diff2 = 0.0, diff3 = 0.0;
+        List values = new ArrayList<>();
+        for (Map.Entry<String, Measures> entry : data.entrySet()) {
+            if (entry.getKey().split("/")[0].equals(date.split("-")[2])) {
+
+                diff1 += entry.getValue().getScribeM1() - entry.getValue().getKafkaM1();
+                diff2 += entry.getValue().getScribeM2() - entry.getValue().getKafkaM2();
+                diff3 += entry.getValue().getScribeM3() - entry.getValue().getKafkaM3();
+
+                measure1Diff = entry.getValue().getScribeM1() - entry.getValue().getKafkaM1();
+                measure2Diff = entry.getValue().getScribeM2() - entry.getValue().getKafkaM2();
+                measure3Diff = entry.getValue().getScribeM3() - entry.getValue().getKafkaM3();
+
+                values.add(new Result(entry.getKey(),
+                        new ThreeMeasures(entry.getValue().getKafkaM1(), entry.getValue().getKafkaM2(), entry.getValue().getKafkaM3()),
+                        new ThreeMeasures(entry.getValue().getScribeM1(), entry.getValue().getScribeM2(), entry.getValue().getScribeM3()),
+                        new ThreeMeasures(measure1Diff, measure2Diff, measure3Diff)));
+            }
+        }
+        values.sort(new MySalaryComp());
+        values.add(new DailySummary(date, diff1, diff2, diff3));
+        Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+        return GSON.toJson(values);
+    }
+
+    static class MySalaryComp implements Comparator<Result> {
+        @Override
+        public int compare(Result r1, Result r2) {
+            return r1.date.compareTo(r2.date);
+        }
+    }
+
+    private static Date getStartDate(String date) throws ParseException {
+        SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd");
+        return dateFormatter.parse(date);
+    }
+
+    private static Date getEndDate(String date, long offsetHours) throws ParseException {
+        SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd");
+        return new Date(dateFormatter.parse(date).getTime() + (long)(offsetHours * 60 * 60 * 1000));
+    }
+
+    static class DailySummary {
+        String date;
+        Double measure1Diff;
+        Double measure2Diff;
+        Double measure3Diff;
+
+        public DailySummary(String date, Double measure1Diff, Double measure2Diff, Double measure3Diff) {
+            this.date = date;
+            this.measure1Diff = measure1Diff;
+            this.measure2Diff = measure2Diff;
+            this.measure3Diff = measure3Diff;
+        }
+    }
+
+    static class ThreeMeasures {
+        double m1, m2, m3;
+
+        public ThreeMeasures(double m1, double m2, double m3) {
+            this.m1 = m1;
+            this.m2 = m2;
+            this.m3 = m3;
+        }
+    }
+
+    static class Result {
+        String date;
+        ThreeMeasures kafkaMeasure;
+        ThreeMeasures scribeMeasure;
+        ThreeMeasures diff;
+
+        public Result(String date, ThreeMeasures kafkaMeasure, ThreeMeasures scribeMeasure, ThreeMeasures diff) {
+            this.date = date;
+            this.kafkaMeasure = kafkaMeasure;
+            this.scribeMeasure = scribeMeasure;
+            this.diff = diff;
+        }
+    }
+
+    static class Measures {
+        double scribeM1;
+        double scribeM2;
+        double scribeM3;
+        double kafkaM1;
+        double kafkaM2;
+        double kafkaM3;
+
+        public double getKafkaM1() {
+            return kafkaM1;
+        }
+
+        public double getKafkaM2() {
+            return kafkaM2;
+        }
+
+        public double getKafkaM3() {
+            return kafkaM3;
+        }
+
+        public double getScribeM1() {
+            return scribeM1;
+        }
+
+        public double getScribeM2() {
+            return scribeM2;
+        }
+
+        public double getScribeM3() {
+            return scribeM3;
+        }
+
+        Measures() {
+            scribeM1 = 0.0;
+            scribeM2 = 0.0;
+            scribeM3 = 0.0;
+            kafkaM1 = 0.0;
+            kafkaM2 = 0.0;
+            kafkaM3 = 0.0;
+        }
+
+        void scribeAdd(double a, double b, double c) {
+            this.scribeM1 += a;
+            this.scribeM2 += b;
+            this.scribeM3 += c;
+        }
+
+        void kafkaAdd(double a, double b, double c) {
+            this.kafkaM1 += a;
+            this.kafkaM2 += b;
+            this.kafkaM3 += c;
+        }
+    }
+
+    private static HashMap<String, Measures> getAggregatedValues(FileSystem fs, Date startDate, Date endDate,
+                                                                 String basePath) throws IOException {
+
+        long ONE_MIN = 60000;
+
+        HashMap<String, Measures> data = new HashMap<>();
+
+        while (startDate.before(endDate)) {
+            Format formatter = new SimpleDateFormat("/yyyy/MM/dd/HH");
+            Path scribePath = new Path(basePath + formatter.format(startDate) + "/scribe/part-r-00000");
+            System.out.println("Reading from " + scribePath);
+            BufferedReader br = null;
+            try {
+                br = new BufferedReader(new InputStreamReader(fs.open(scribePath), StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                startDate.setTime(startDate.getTime() + (long) (ONE_MIN * 60l));
+                System.out.println("IOException encountered while reading from " + scribePath);
+                continue;
+            }
+            String line;
+            line = br.readLine();
+            while (line != null) {
+                String[] splitIt = line.split(",");
+                try {
+                    if (data.containsKey(splitIt[0])) {
+                        data.get(splitIt[0]).scribeAdd(Double.parseDouble(splitIt[1]), Double.parseDouble(splitIt[2]), Double.parseDouble(splitIt[3]));
+                    } else {
+                        data.put(splitIt[0], new Measures());
+
+                        data.get(splitIt[0]).scribeAdd(Double.parseDouble(splitIt[1]), Double.parseDouble(splitIt[2]), Double.parseDouble(splitIt[3]));
+
+                    }
+                } catch (NumberFormatException e) {
+                    //e.printStackTrace();
+                    System.out.print("#,");
+                }
+                line = br.readLine();
+            }
+
+
+            Path kafkaPath = new Path(basePath + formatter.format(startDate) + "/kafka/part-r-00000");
+            System.out.println("Reading from " + kafkaPath);
+
+            try {
+                br.close();
+                br = new BufferedReader(new InputStreamReader(fs.open(kafkaPath),StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                startDate.setTime(startDate.getTime() +(long)( ONE_MIN * 60l));
+                System.out.println("IOException encountered while reading from " + kafkaPath);
+                continue;
+            }
+            line = br.readLine();
+            while (line != null) {
+                String[] splitIt = line.split(",");
+                try {
+                    if (data.containsKey(splitIt[0])) {
+                        data.get(splitIt[0]).kafkaAdd(Double.parseDouble(splitIt[1]), Double.parseDouble(splitIt[2]), Double.parseDouble(splitIt[3]));
+                    } else {
+                        data.put(splitIt[0], new Measures());
+                        data.get(splitIt[0]).kafkaAdd(Double.parseDouble(splitIt[1]), Double.parseDouble(splitIt[2]), Double.parseDouble(splitIt[3]));
+                    }
+                } catch (NumberFormatException e) {
+                    //e.printStackTrace();
+                    System.out.print("#,");
+                }
+                line = br.readLine();
+            }
+            startDate.setTime(startDate.getTime() + (long) (ONE_MIN * 60l));
+            br.close();
+        }
+
+        return data;
+    }
+
+}
