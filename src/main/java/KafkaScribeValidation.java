@@ -67,13 +67,19 @@ public class KafkaScribeValidation {
         HashMap<String, Measures> data = getAggregatedValues(fs, startDate, endDate, basePath);
         Double measure1Diff = 0.0, measure2Diff = 0.0, measure3Diff = 0.0;
         Double diff1 = 0.0, diff2 = 0.0, diff3 = 0.0;
+        Double kafkaMeasure1 = 0.0, kafkaMeasure2 = 0.0, kafkaMeasure3 = 0.0;
+        Double sctibeMeasure1 = 0.0, sctibeMeasure2 = 0.0, sctibeMeasure3 = 0.0;
         List values = new ArrayList<>();
         for (Map.Entry<String, Measures> entry : data.entrySet()) {
             if (entry.getKey().split("/")[0].equals(date.split("-")[2])) {
 
-                diff1 += entry.getValue().getScribeM1() - entry.getValue().getKafkaM1();
-                diff2 += entry.getValue().getScribeM2() - entry.getValue().getKafkaM2();
-                diff3 += entry.getValue().getScribeM3() - entry.getValue().getKafkaM3();
+                kafkaMeasure1 +=  entry.getValue().getKafkaM1();
+                kafkaMeasure2 +=  entry.getValue().getKafkaM2();
+                kafkaMeasure3 +=  entry.getValue().getKafkaM3();
+
+                sctibeMeasure1 +=  entry.getValue().getScribeM1();
+                sctibeMeasure2 +=  entry.getValue().getScribeM2();
+                sctibeMeasure3 +=  entry.getValue().getScribeM3();
 
                 measure1Diff = entry.getValue().getScribeM1() - entry.getValue().getKafkaM1();
                 measure2Diff = entry.getValue().getScribeM2() - entry.getValue().getKafkaM2();
@@ -85,8 +91,13 @@ public class KafkaScribeValidation {
                         new ThreeMeasures(measure1Diff, measure2Diff, measure3Diff)));
             }
         }
+        diff1 = sctibeMeasure1 - kafkaMeasure1;
+        diff2 = sctibeMeasure2 - kafkaMeasure2;
+        diff3 = sctibeMeasure3 - kafkaMeasure3;
         values.sort(new MySalaryComp());
-        values.add(new DailySummary(date, diff1, diff2, diff3));
+        values.add(new Result(date, new ThreeMeasures(kafkaMeasure1, kafkaMeasure2, kafkaMeasure3),
+                new ThreeMeasures(sctibeMeasure1, sctibeMeasure2, sctibeMeasure3),
+                new ThreeMeasures(diff1, diff2, diff3)));
         Gson GSON = new GsonBuilder().setPrettyPrinting().create();
         return GSON.toJson(values);
     }
@@ -106,20 +117,6 @@ public class KafkaScribeValidation {
     private static Date getEndDate(String date, long offsetHours) throws ParseException {
         SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd");
         return new Date(dateFormatter.parse(date).getTime() + (long)(offsetHours * 60 * 60 * 1000));
-    }
-
-    static class DailySummary {
-        String date;
-        Double measure1Diff;
-        Double measure2Diff;
-        Double measure3Diff;
-
-        public DailySummary(String date, Double measure1Diff, Double measure2Diff, Double measure3Diff) {
-            this.date = date;
-            this.measure1Diff = measure1Diff;
-            this.measure2Diff = measure2Diff;
-            this.measure3Diff = measure3Diff;
-        }
     }
 
     static class ThreeMeasures {
