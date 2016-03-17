@@ -36,7 +36,7 @@ public class KafkaScribeValidation {
         if (colo.equals("krypton")) {
             hdfsUri = "webhdfs://krypton-webhdfs.grid.uh1.inmobi.com:14000";
         } else if (colo.equals("topaz")) {
-            hdfsUri = "topaz-webhdfs.grid.uj1.inmobi.com\n";
+            hdfsUri = "webhdfs://topaz-webhdfs.grid.uj1.inmobi.com:14000";
         } else if (colo.equals("emerald")) {
             hdfsUri = "emerald-webhdfs.grid.lhr1.inmobi.com";
         } else if (colo.equals("opal")) {
