@@ -8,9 +8,13 @@ import java.util.Date;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.json.CDL;
+import org.json.JSONArray;
+
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -65,25 +69,35 @@ public class KafkaScribeValidation {
 
 
         HashMap<String, Measures> data = getAggregatedValues(fs, startDate, endDate, basePath);
-        Double measure1Diff = 0.0, measure2Diff = 0.0, measure3Diff = 0.0;
-        Double diff1 = 0.0, diff2 = 0.0, diff3 = 0.0;
+        Double measure1Diff, measure2Diff, measure3Diff;
+        Double diff1, diff2, diff3;
         Double kafkaMeasure1 = 0.0, kafkaMeasure2 = 0.0, kafkaMeasure3 = 0.0;
-        Double sctibeMeasure1 = 0.0, sctibeMeasure2 = 0.0, sctibeMeasure3 = 0.0;
+        Double scribeMeasure1 = 0.0, scribeMeasure2 = 0.0, scribeMeasure3 = 0.0;
         List values = new ArrayList<>();
+
+        JSONArray docs = new JSONArray();
         for (Map.Entry<String, Measures> entry : data.entrySet()) {
             if (entry.getKey().split("/")[0].equals(date.split("-")[2])) {
+
+                Map<String, String> output = new LinkedHashMap<>();
 
                 kafkaMeasure1 +=  entry.getValue().getKafkaM1();
                 kafkaMeasure2 +=  entry.getValue().getKafkaM2();
                 kafkaMeasure3 +=  entry.getValue().getKafkaM3();
 
-                sctibeMeasure1 +=  entry.getValue().getScribeM1();
-                sctibeMeasure2 +=  entry.getValue().getScribeM2();
-                sctibeMeasure3 +=  entry.getValue().getScribeM3();
+                scribeMeasure1 +=  entry.getValue().getScribeM1();
+                scribeMeasure2 +=  entry.getValue().getScribeM2();
+                scribeMeasure3 +=  entry.getValue().getScribeM3();
 
                 measure1Diff = entry.getValue().getScribeM1() - entry.getValue().getKafkaM1();
                 measure2Diff = entry.getValue().getScribeM2() - entry.getValue().getKafkaM2();
                 measure3Diff = entry.getValue().getScribeM3() - entry.getValue().getKafkaM3();
+
+                output.put("date", entry.getKey());
+                output.put("scribeMeasure3", String.valueOf(entry.getValue().getScribeM1()));
+                output.put("kafkaMeasure3", String.valueOf(entry.getValue().getKafkaM1()));
+
+                docs.put(output);
 
                 values.add(new Result(entry.getKey(),
                         new ThreeMeasures(entry.getValue().getKafkaM1(), entry.getValue().getKafkaM2(), entry.getValue().getKafkaM3()),
@@ -91,13 +105,20 @@ public class KafkaScribeValidation {
                         new ThreeMeasures(measure1Diff, measure2Diff, measure3Diff)));
             }
         }
-        diff1 = sctibeMeasure1 - kafkaMeasure1;
-        diff2 = sctibeMeasure2 - kafkaMeasure2;
-        diff3 = sctibeMeasure3 - kafkaMeasure3;
+
+        diff1 = scribeMeasure1 - kafkaMeasure1;
+        diff2 = scribeMeasure2 - kafkaMeasure2;
+        diff3 = scribeMeasure3 - kafkaMeasure3;
         values.sort(new MySalaryComp());
         values.add(new Result(date, new ThreeMeasures(kafkaMeasure1, kafkaMeasure2, kafkaMeasure3),
-                new ThreeMeasures(sctibeMeasure1, sctibeMeasure2, sctibeMeasure3),
+                new ThreeMeasures(scribeMeasure1, scribeMeasure2, scribeMeasure3),
                 new ThreeMeasures(diff1, diff2, diff3)));
+
+        File file=new File("/home/narayan.periwal/test1.csv");
+        String csv = CDL.toString(docs);
+        FileUtils.writeStringToFile(file, csv);
+
+
         Gson GSON = new GsonBuilder().setPrettyPrinting().create();
         return GSON.toJson(values);
     }
